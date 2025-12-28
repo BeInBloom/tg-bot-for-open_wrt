@@ -1,24 +1,29 @@
+//! Telegram bot for OpenWRT router management.
+
 mod bot;
 mod core;
 mod domain;
 mod infrastructure;
 
-use core::App;
-use infrastructure::Config;
+use std::sync::Arc;
 
-const CONFIG_PATH: &str = r#"./config"#;
+use bot::BotManager;
+use core::App;
+use infrastructure::{Config, OpenWrtRouter, UnixSignalHandler};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Загружаем конфигурацию из файла
-    dotenvy::from_path(CONFIG_PATH)?;
+    load_config()?;
 
-    // Создаем конфигурацию из environment variables
     let config = Config::new();
+    let router = Arc::new(OpenWrtRouter::new());
+    let bot_manager = BotManager::from_config(&config, router)?;
 
-    // Создаем и запускаем приложение
-    let app = App::new(&config)?;
-    app.run().await?;
+    let app = App::new(&config, UnixSignalHandler::new(), bot_manager)?;
+    app.run().await
+}
 
+fn load_config() -> anyhow::Result<()> {
+    dotenvy::from_path("./config")?;
     Ok(())
 }

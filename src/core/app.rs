@@ -1,100 +1,59 @@
-use tokio::signal;
+//! Application orchestration.
 
-use crate::{
-    domain::types::{ShutdownSender, ShutdownSignal},
-    infrastructure::{Config, LogGuard},
-};
+use crate::bot::BotManager;
+use crate::domain::SignalHandler;
+use crate::domain::types::{ShutdownSender, ShutdownSignal};
+use crate::infrastructure::{Config, LogGuard};
 
-/// Основная структура приложения
-pub struct App {
+pub struct App<S: SignalHandler> {
     _log_guard: LogGuard,
+    signal_handler: S,
+    bot_manager: BotManager,
 }
 
-impl App {
-    /// Создает и инициализирует приложение
-    pub fn new(config: &Config) -> anyhow::Result<Self> {
+impl<S: SignalHandler> App<S> {
+    pub fn new(
+        config: &Config,
+        signal_handler: S,
+        bot_manager: BotManager,
+    ) -> anyhow::Result<Self> {
         let log_guard = crate::infrastructure::init_logging(config)?;
 
         Ok(Self {
             _log_guard: log_guard,
+            signal_handler,
+            bot_manager,
         })
     }
 
-    /// Запускает приложение
     pub async fn run(self) -> anyhow::Result<()> {
         tracing::info!("Application started");
 
-        // Shutdown channel: для передачи сигнала завершения в бот
-        let (shutdown_tx, shutdown_rx): (ShutdownSender, ShutdownSignal) =
-            tokio::sync::mpsc::channel(1);
+        let (shutdown_tx, shutdown_rx) = create_shutdown_channel();
+        let handle = tokio::spawn(self.bot_manager.run_all(shutdown_rx));
 
-        // Запускаем бота в отдельной задаче
-        let bot_handle = tokio::spawn(run_bot(shutdown_rx));
+        wait_for_signal(&self.signal_handler).await;
 
-        // Ждем сигнал завершения от ОС
-        Self::wait_for_shutdown_signal().await;
-
-        tracing::info!("Shutdown signal received, stopping application...");
-
-        // Отправляем сигнал боту на завершение
         let _ = shutdown_tx.send(()).await;
+        await_completion(handle).await;
 
-        // Ждем завершения бота (graceful shutdown)
-        match bot_handle.await {
-            Ok(_) => tracing::info!("Bot stopped gracefully"),
-            Err(e) => tracing::error!("Bot task panicked: {}", e),
-        }
-
-        tracing::info!("Application shutdown complete");
-
+        tracing::info!("Shutdown complete");
         Ok(())
-    }
-
-    /// Ждет сигналы завершения от ОС (SIGINT, SIGTERM, SIGHUP)
-    async fn wait_for_shutdown_signal() {
-        use signal::unix::{SignalKind, signal};
-
-        // Создаем слушателей для разных сигналов
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("failed to install SIGTERM handler");
-        let mut sigint = signal(SignalKind::interrupt()).expect("failed to install SIGINT handler");
-        let mut sighup = signal(SignalKind::hangup()).expect("failed to install SIGHUP handler");
-
-        tokio::select! {
-            _ = sigterm.recv() => {
-                tracing::info!("Received SIGTERM");
-            }
-            _ = sigint.recv() => {
-                tracing::info!("Received SIGINT (Ctrl+C)");
-            }
-            _ = sighup.recv() => {
-                tracing::info!("Received SIGHUP");
-            }
-        }
     }
 }
 
-/// Основной цикл бота
-async fn run_bot(mut shutdown_rx: ShutdownSignal) {
-    tracing::info!("Bot loop started");
+fn create_shutdown_channel() -> (ShutdownSender, ShutdownSignal) {
+    tokio::sync::mpsc::channel(1)
+}
 
-    loop {
-        tokio::select! {
-            // Проверяем сигнал shutdown
-            _ = shutdown_rx.recv() => {
-                tracing::info!("Bot received shutdown signal");
-                break;
-            }
-            // Симулируем работу бота
-            _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => {
-                tracing::info!("Bot is processing messages...");
-                // Здесь будет реальная логика бота:
-                // - Получение обновлений от Telegram
-                // - Обработка команд
-                // - и т.д.
-            }
-        }
+async fn wait_for_signal<S: SignalHandler>(handler: &S) {
+    let signal = handler.wait_for_shutdown().await;
+    tracing::info!("Received {signal}, stopping...");
+}
+
+async fn await_completion(handle: tokio::task::JoinHandle<()>) {
+    match handle.await {
+        Ok(()) => tracing::info!("All bots stopped"),
+        Err(e) => tracing::error!("Bot manager panicked: {e}"),
     }
-
-    tracing::info!("Bot loop finished");
 }
