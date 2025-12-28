@@ -1,18 +1,6 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum AppError {
-    #[error("command not available")]
-    Unauthorized,
-
-    #[error("router error: {0}")]
-    Router(#[from] RouterError),
-
-    #[error("internal error: {0}")]
-    Internal(String),
-}
-
-#[derive(Debug, Error)]
 pub enum RouterError {
     #[error("unable to execute command {cmd}: {source}")]
     Spawn {

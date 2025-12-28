@@ -1,5 +1,15 @@
-pub mod error;
-pub mod types;
+//! Domain layer: traits, types, and error definitions.
 
-pub use error::{AppError, RouterError};
-pub use types::{ShutdownSender, ShutdownSignal};
+pub mod error;
+pub mod messenger;
+pub mod router;
+pub mod signal;
+pub mod types;
+pub mod ubus;
+pub mod wifi_mode;
+
+pub use error::RouterError;
+pub use router::{RouterInfo, RouterStatus};
+pub use signal::SignalHandler;
+pub use types::ShutdownSignal;
+pub use wifi_mode::WifiMode;
