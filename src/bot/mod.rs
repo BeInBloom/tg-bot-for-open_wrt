@@ -93,8 +93,14 @@ async fn wait_for_shutdown(shutdown_rx: &mut ShutdownSignal) {
 }
 
 async fn stop_all_bots(handles: Vec<BotHandle>) {
-    for (handle, tx) in handles {
+    // Send shutdown signal to all bots
+    for (_, tx) in &handles {
         let _ = tx.send(()).await;
+    }
+
+    // Await all bots in parallel
+    let futures: Vec<_> = handles.into_iter().map(|(h, _)| h).collect();
+    for handle in futures {
         let _ = handle.await;
     }
 }
