@@ -1,9 +1,6 @@
 use std::collections::HashMap;
 
-const PREFIX: &str = r#"BOT_"#;
-
-const ERR_REQUIRED_KEY: &str = r#"required config key"#;
-const ERR_PARSE_KEY: &str = r#"failed to parse config key"#;
+const PREFIX: &str = "BOT_";
 
 #[derive(Clone)]
 pub struct Config {
@@ -30,7 +27,7 @@ impl Config {
 
     pub fn required(&self, key: &str) -> anyhow::Result<&str> {
         self.optional(key)
-            .ok_or_else(|| anyhow::anyhow!("{ERR_REQUIRED_KEY} '{key}'"))
+            .ok_or_else(|| anyhow::anyhow!("required config key '{key}'"))
     }
 
     pub fn parse_optional<T>(&self, key: &str) -> Option<T>
@@ -40,13 +37,27 @@ impl Config {
         self.optional(key).and_then(|s| s.parse::<T>().ok())
     }
 
-    pub fn parse_required<T>(&self, key: &str) -> anyhow::Result<T>
+    pub fn parse_list<T>(&self, key: &str) -> Vec<T>
     where
         T: std::str::FromStr,
-        T::Err: std::fmt::Display,
     {
-        let s = self.required(key)?;
-        s.parse()
-            .map_err(|e| anyhow::anyhow!("{ERR_PARSE_KEY} '{key}': {e}"))
+        self.optional(key)
+            .map(|s| {
+                s.split(',')
+                    .filter_map(|item| item.trim().parse::<T>().ok())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn required_list<T>(&self, key: &str) -> anyhow::Result<Vec<T>>
+    where
+        T: std::str::FromStr,
+    {
+        let list = self.parse_list(key);
+        if list.is_empty() {
+            anyhow::bail!("required config key '{key}' is missing or empty");
+        }
+        Ok(list)
     }
 }
