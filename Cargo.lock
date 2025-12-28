@@ -1483,6 +1483,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dotenvy",
+ "futures",
  "serde",
  "serde_json",
  "teloxide",
