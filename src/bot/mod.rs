@@ -9,7 +9,6 @@ pub mod telegram;
 
 use std::sync::Arc;
 
-use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
 use crate::domain::messenger::Bot;
@@ -54,11 +53,10 @@ impl BotManager {
 
         tracing::info!("Starting {} bot(s)", self.bots.len());
 
-        let (broadcast_tx, _) = broadcast::channel::<()>(1);
-        let handles = spawn_all_bots(self.bots, &broadcast_tx);
+        let handles = spawn_all_bots(self.bots);
 
         wait_for_shutdown(&mut shutdown_rx).await;
-        stop_all_bots(broadcast_tx, handles).await;
+        stop_all_bots(handles).await;
 
         tracing::info!("All bots stopped");
     }
@@ -75,24 +73,18 @@ fn create_telegram_bot<R: RouterInfo + 'static>(
     Ok(TelegramBot::new(token, router, auth))
 }
 
-fn spawn_all_bots(bots: Vec<Box<dyn Bot>>, broadcast_tx: &broadcast::Sender<()>) -> Vec<BotHandle> {
-    bots.into_iter()
-        .map(|bot| spawn_bot(bot, broadcast_tx))
-        .collect()
+fn spawn_all_bots(bots: Vec<Box<dyn Bot>>) -> Vec<BotHandle> {
+    bots.into_iter().map(spawn_bot).collect()
 }
 
-fn spawn_bot(bot: Box<dyn Bot>, broadcast_tx: &broadcast::Sender<()>) -> BotHandle {
-    let mut rx = broadcast_tx.subscribe();
-    let (bot_tx, bot_rx) = tokio::sync::mpsc::channel(1);
+fn spawn_bot(bot: Box<dyn Bot>) -> BotHandle {
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
 
     let handle = tokio::spawn(async move {
-        tokio::select! {
-            _ = bot.run(bot_rx) => {}
-            _ = rx.recv() => {}
-        }
+        bot.run(rx).await;
     });
 
-    (handle, bot_tx)
+    (handle, tx)
 }
 
 async fn wait_for_shutdown(shutdown_rx: &mut ShutdownSignal) {
@@ -100,8 +92,7 @@ async fn wait_for_shutdown(shutdown_rx: &mut ShutdownSignal) {
     tracing::info!("Shutting down all bots...");
 }
 
-async fn stop_all_bots(broadcast_tx: broadcast::Sender<()>, handles: Vec<BotHandle>) {
-    drop(broadcast_tx);
+async fn stop_all_bots(handles: Vec<BotHandle>) {
     for (handle, tx) in handles {
         let _ = tx.send(()).await;
         let _ = handle.await;
