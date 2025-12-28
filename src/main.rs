@@ -17,9 +17,11 @@ async fn main() -> anyhow::Result<()> {
 
     let config = Config::new();
     let router = Arc::new(OpenWrtRouter::new());
-    let bot_manager = BotManager::from_config(&config, router)?;
 
-    let app = App::new(&config, UnixSignalHandler::new(), bot_manager)?;
+    let mut manager = BotManager::new();
+    manager.add(bot::factory::create_telegram_bot(&config, router)?);
+
+    let app = App::new(&config, UnixSignalHandler::new(), manager)?;
     app.run().await
 }
 
