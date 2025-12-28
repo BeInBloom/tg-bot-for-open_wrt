@@ -56,7 +56,7 @@ where
     R: RouterInfo + 'static,
     A: AuthFilter + 'static,
 {
-    async fn run(self: Box<Self>, mut shutdown: ShutdownSignal) {
+    async fn run(self: Box<Self>, mut shutdown: ShutdownSignal) -> anyhow::Result<()> {
         tracing::info!("Starting Telegram bot");
 
         let handler = self.build_handler();
@@ -74,6 +74,7 @@ where
         }
 
         tracing::info!("Telegram bot stopped");
+        Ok(())
     }
 }
 

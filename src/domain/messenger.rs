@@ -44,7 +44,7 @@ pub trait Messenger: Send + Sync {
 
 #[async_trait]
 pub trait Bot: Send + Sync {
-    async fn run(self: Box<Self>, shutdown: crate::domain::ShutdownSignal);
+    async fn run(self: Box<Self>, shutdown: crate::domain::ShutdownSignal) -> anyhow::Result<()>;
 }
 
 pub trait AuthFilter: Send + Sync {

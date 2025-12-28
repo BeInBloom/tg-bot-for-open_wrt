@@ -9,6 +9,7 @@ pub mod telegram;
 
 use std::sync::Arc;
 
+use futures::future::join_all;
 use tokio::task::JoinHandle;
 
 use crate::domain::messenger::Bot;
@@ -21,7 +22,10 @@ pub use telegram::TelegramBot;
 const KEY_BOT_TOKEN: &str = "BOT_TOKEN";
 const KEY_ALLOWED_USERS: &str = "BOT_ALLOWED_USERS";
 
-type BotHandle = (JoinHandle<()>, tokio::sync::mpsc::Sender<()>);
+type BotHandle = (
+    JoinHandle<anyhow::Result<()>>,
+    tokio::sync::mpsc::Sender<()>,
+);
 
 pub struct BotManager {
     bots: Vec<Box<dyn Bot>>,
@@ -53,12 +57,31 @@ impl BotManager {
 
         tracing::info!("Starting {} bot(s)", self.bots.len());
 
-        let handles = spawn_all_bots(self.bots);
-
-        wait_for_shutdown(&mut shutdown_rx).await;
-        stop_all_bots(handles).await;
+        let handles = self.spawn_all();
+        Self::wait_for_shutdown(&mut shutdown_rx).await;
+        Self::stop_all(handles).await;
 
         tracing::info!("All bots stopped");
+    }
+
+    fn spawn_all(self) -> Vec<BotHandle> {
+        self.bots.into_iter().map(Self::spawn_bot).collect()
+    }
+
+    fn spawn_bot(bot: Box<dyn Bot>) -> BotHandle {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let handle = tokio::spawn(async move { bot.run(rx).await });
+        (handle, tx)
+    }
+
+    async fn wait_for_shutdown(shutdown_rx: &mut ShutdownSignal) {
+        shutdown_rx.recv().await;
+        tracing::info!("Shutting down all bots...");
+    }
+
+    async fn stop_all(handles: Vec<BotHandle>) {
+        join_all(handles.iter().map(|(_, tx)| tx.send(()))).await;
+        join_all(handles.into_iter().map(|(h, _)| h)).await;
     }
 }
 
@@ -71,32 +94,6 @@ fn create_telegram_bot<R: RouterInfo + 'static>(
     let auth = UserWhitelist::from_iter(allowed_users);
 
     Ok(TelegramBot::new(token, router, auth))
-}
-
-fn spawn_all_bots(bots: Vec<Box<dyn Bot>>) -> Vec<BotHandle> {
-    bots.into_iter().map(spawn_bot).collect()
-}
-
-fn spawn_bot(bot: Box<dyn Bot>) -> BotHandle {
-    let (tx, rx) = tokio::sync::mpsc::channel(1);
-
-    let handle = tokio::spawn(async move {
-        bot.run(rx).await;
-    });
-
-    (handle, tx)
-}
-
-async fn wait_for_shutdown(shutdown_rx: &mut ShutdownSignal) {
-    shutdown_rx.recv().await;
-    tracing::info!("Shutting down all bots...");
-}
-
-async fn stop_all_bots(handles: Vec<BotHandle>) {
-    use futures::future::join_all;
-
-    join_all(handles.iter().map(|(_, tx)| tx.send(()))).await;
-    join_all(handles.into_iter().map(|(h, _)| h)).await;
 }
 
 impl Default for BotManager {
